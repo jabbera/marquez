@@ -38,54 +38,54 @@ public interface LineageDao {
    */
   @SqlQuery(
       // dataset_ids: all the input and output datasets of the current version of the specified jobs
-      "WITH RECURSIVE\n"
-          + "    job_io AS (\n"
-          + "        SELECT j.uuid AS job_uuid,\n"
-          + "        ARRAY_AGG(DISTINCT io.dataset_uuid) FILTER (WHERE io_type='INPUT') AS inputs,\n"
-          + "        ARRAY_AGG(DISTINCT io.dataset_uuid) FILTER (WHERE io_type='OUTPUT') AS outputs\n"
-          + "        FROM jobs_view j\n"
-          + "        LEFT JOIN jobs_view s ON s.symlink_target_uuid=j.uuid\n"
-          + "        LEFT JOIN job_versions v on COALESCE(j.current_version_uuid, s.current_version_uuid) = v.uuid\n"
-          + "        LEFT JOIN job_versions_io_mapping io on v.uuid = io.job_version_uuid\n"
-          + "        GROUP BY j.uuid\n"
-          + "    ),\n"
-          + "    lineage(job_uuid, inputs, outputs) AS (\n"
-          + "        SELECT job_uuid, inputs, outputs, 0 AS depth\n"
-          + "        FROM job_io\n"
-          + "        WHERE job_uuid IN (<jobIds>)\n"
-          + "        UNION\n"
-          + "        SELECT io.job_uuid, io.inputs, io.outputs, l.depth + 1\n"
-          + "        FROM job_io io,\n"
-          + "             lineage l\n"
-          + "        WHERE io.job_uuid != l.job_uuid AND\n"
-          + "        array_cat(io.inputs, io.outputs) && array_cat(l.inputs, l.outputs)\n"
-          + "        AND depth < :depth"
-          + "    )\n"
-          + "SELECT DISTINCT ON (j.uuid) j.*, inputs AS input_uuids, outputs AS output_uuids, jc.context\n"
-          + "FROM lineage l2\n"
-          + "INNER JOIN jobs_view s ON s.uuid=l2.job_uuid\n"
-          + "INNER JOIN jobs_view j ON j.uuid=COALESCE(s.symlink_target_uuid, s.uuid)\n"
-          + "LEFT JOIN job_contexts jc on jc.uuid = j.current_job_context_uuid")
+      """
+      WITH RECURSIVE
+          job_io AS (
+              SELECT j.uuid AS job_uuid,
+              ARRAY_AGG(DISTINCT io.dataset_uuid) FILTER (WHERE io_type='INPUT') AS inputs,
+              ARRAY_AGG(DISTINCT io.dataset_uuid) FILTER (WHERE io_type='OUTPUT') AS outputs
+              FROM jobs_view j
+              LEFT JOIN jobs_view s ON s.symlink_target_uuid=j.uuid
+              LEFT JOIN job_versions v on COALESCE(j.current_version_uuid, s.current_version_uuid) = v.uuid
+              LEFT JOIN job_versions_io_mapping io on v.uuid = io.job_version_uuid
+              GROUP BY j.uuid
+          ),
+          lineage(job_uuid, inputs, outputs) AS (
+              SELECT job_uuid, inputs, outputs, 0 AS depth
+              FROM job_io
+              WHERE job_uuid IN (<jobIds>)
+              UNION
+              SELECT io.job_uuid, io.inputs, io.outputs, l.depth + 1
+              FROM job_io io,
+                   lineage l
+              WHERE io.job_uuid != l.job_uuid AND
+              array_cat(io.inputs, io.outputs) && array_cat(l.inputs, l.outputs)
+              AND depth < :depth    )
+      SELECT DISTINCT ON (j.uuid) j.*, inputs AS input_uuids, outputs AS output_uuids, jc.context
+      FROM lineage l2
+      INNER JOIN jobs_view s ON s.uuid=l2.job_uuid
+      INNER JOIN jobs_view j ON j.uuid=COALESCE(s.symlink_target_uuid, s.uuid)
+      LEFT JOIN job_contexts jc on jc.uuid = j.current_job_context_uuid""")
   Set<JobData> getLineage(@BindList Set<UUID> jobIds, int depth);
 
   @SqlQuery(
       """
     SELECT ds.*, dv.fields, dv.lifecycle_state
-    FROM datasets ds
+    FROM datasets_view ds
     LEFT JOIN dataset_versions dv on dv.uuid = ds.current_version_uuid
     WHERE ds.uuid IN (<dsUuids>)
-    AND ds.is_deleted is false
     """)
-  Set<DatasetData> getNonDeletedDatasetData(@BindList Set<UUID> dsUuids);
+  Set<DatasetData> getDatasetData(@BindList Set<UUID> dsUuids);
 
   @SqlQuery(
-      "select j.uuid from jobs j\n"
-          + "inner join job_versions jv on jv.job_uuid = j.uuid\n"
-          + "inner join job_versions_io_mapping io on io.job_version_uuid = jv.uuid\n"
-          + "inner join datasets ds on ds.uuid = io.dataset_uuid\n"
-          + "where ds.name = :datasetName and ds.namespace_name = :namespaceName\n"
-          + "order by io_type DESC, jv.created_at DESC\n"
-          + "limit 1")
+      """
+      SELECT j.uuid FROm jobs j
+      INNER JOIN job_versions jv ON jv.job_uuid = j.uuid
+      INNER JOIN job_versions_io_mapping io ON io.job_version_uuid = jv.uuid
+      INNER JOIN datasets_view ds ON ds.uuid = io.dataset_uuid
+      WHERE ds.name = :datasetName AND ds.namespace_name = :namespaceName
+      ORDER BY io_type DESC, jv.created_at DESC
+      LIMIT 1""")
   Optional<UUID> getJobFromInputOrOutput(String datasetName, String namespaceName);
 
   @SqlQuery(

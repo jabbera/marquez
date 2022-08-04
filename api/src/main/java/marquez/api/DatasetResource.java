@@ -157,18 +157,19 @@ public class DatasetResource extends BaseResource {
   @DELETE
   @Path("{dataset}")
   @Produces(APPLICATION_JSON)
-  public Response delete(
+  public Response hide(
       @PathParam("namespace") NamespaceName namespaceName,
       @PathParam("dataset") DatasetName datasetName) {
     throwIfNotExists(namespaceName);
 
-    datasetService
-        .softDelete(namespaceName.getValue(), datasetName.getValue())
-        .orElseThrow(() -> new DatasetNotFoundException(datasetName));
     Dataset dataset =
         datasetService
             .findDatasetByName(namespaceName.getValue(), datasetName.getValue())
             .orElseThrow(() -> new DatasetNotFoundException(datasetName));
+
+    datasetService
+        .hide(namespaceName.getValue(), datasetName.getValue())
+        .orElseThrow(() -> new DatasetNotFoundException(datasetName));
     return Response.ok(dataset).build();
   }
 

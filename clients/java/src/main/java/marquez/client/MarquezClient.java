@@ -150,7 +150,7 @@ public class MarquezClient {
     return Dataset.fromJson(bodyAsJson);
   }
 
-  public Dataset deleteDataset(@NonNull String namespaceName, @NonNull String datasetName) {
+  public Dataset hideDataset(@NonNull String namespaceName, @NonNull String datasetName) {
     final String bodyAsJson = http.delete(url.toDatasetUrl(namespaceName, datasetName));
     return Dataset.fromJson(bodyAsJson);
   }
@@ -212,6 +212,11 @@ public class MarquezClient {
 
   public Job getJob(@NonNull String namespaceName, @NonNull String jobName) {
     final String bodyAsJson = http.get(url.toJobUrl(namespaceName, jobName));
+    return Job.fromJson(bodyAsJson);
+  }
+
+  public Job hideJob(@NonNull String namespaceName, @NonNull String jobName) {
+    final String bodyAsJson = http.delete(url.toJobUrl(namespaceName, jobName));
     return Job.fromJson(bodyAsJson);
   }
 
