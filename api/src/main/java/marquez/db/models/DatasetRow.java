@@ -26,7 +26,6 @@ public class DatasetRow {
   @Getter @NonNull private final Instant updatedAt;
   @Getter @NonNull private final UUID namespaceUuid;
   @Getter @NonNull private final UUID sourceUuid;
-  @Getter @NonNull private final String name;
   @Getter @NonNull private final String physicalName;
   @Nullable private final Instant lastModifiedAt;
   @Nullable private final String description;

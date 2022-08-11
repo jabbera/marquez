@@ -23,6 +23,7 @@ import marquez.common.models.TagName;
 import marquez.db.mappers.DatasetMapper;
 import marquez.db.mappers.DatasetRowMapper;
 import marquez.db.models.DatasetRow;
+import marquez.db.models.DatasetSymlinkRow;
 import marquez.db.models.DatasetVersionRow;
 import marquez.db.models.NamespaceRow;
 import marquez.db.models.SourceRow;
@@ -42,9 +43,14 @@ import org.jdbi.v3.sqlobject.transaction.Transaction;
 @RegisterRowMapper(DatasetMapper.class)
 public interface DatasetDao extends BaseDao {
   @SqlQuery(
-      "SELECT EXISTS ("
+      "WITH symlink AS (\n"
+          + "    SELECT symlink_uuid\n"
+          + "    FROM dataset_symlinks\n"
+          + "    JOIN namespaces ON namespaces.uuid = dataset_symlinks.namespace_uuid\n"
+          + "    WHERE namespaces.name=:namespaceName and dataset_symlinks.name=:datasetName\n"
+          + ") SELECT EXISTS ("
           + "SELECT 1 FROM datasets AS d "
-          + "WHERE d.name = :datasetName AND d.namespace_name = :namespaceName)")
+          + "WHERE d.symlink_uuid IN (SELECT symlink_uuid FROM symlink))")
   boolean exists(String namespaceName, String datasetName);
 
   @SqlBatch(
@@ -69,22 +75,29 @@ public interface DatasetDao extends BaseDao {
   void updateVersion(UUID rowUuid, Instant updatedAt, UUID currentVersionUuid);
 
   @SqlQuery(
-      "WITH selected_datasets AS (\n"
+      "WITH symlinks AS (\n"
+          + "    SELECT ds_joined.symlink_uuid AS uuid, ds_joined.name AS name, namespaces.name AS namespace\n"
+          + "    FROM dataset_symlinks ds\n"
+          + "    JOIN dataset_symlinks ds_joined ON ds.symlink_uuid = ds_joined.symlink_uuid\n"
+          + "    JOIN namespaces ON namespaces.uuid = ds_joined.namespace_uuid\n"
+          + "    WHERE namespaces.name=:namespaceName and ds.name=:datasetName\n"
+          + "), selected_datasets AS (\n"
           + "    SELECT d.*\n"
           + "    FROM datasets d\n"
-          + "    WHERE d.namespace_name = :namespaceName\n"
-          + "    AND d.name = :datasetName\n"
+          + "    INNER JOIN symlinks ON d.symlink_uuid = symlinks.uuid\n"
           + "), dataset_runs AS (\n"
-          + "    SELECT d.uuid, d.name, d.namespace_name, dv.run_uuid, dv.lifecycle_state, event_time, event\n"
+          + "    SELECT d.uuid, dsl.name, d.namespace_name, dv.run_uuid, dv.lifecycle_state, event_time, event\n"
           + "    FROM selected_datasets d\n"
+          + "    INNER JOIN dataset_symlinks dsl ON d.symlink_uuid = dsl.symlink_uuid AND dsl.is_primary=true\n"
           + "    INNER JOIN dataset_versions dv ON dv.uuid = d.current_version_uuid\n"
           + "    LEFT JOIN LATERAL (\n"
           + "        SELECT run_uuid, event_time, event FROM lineage_events\n"
           + "        WHERE run_uuid = dv.run_uuid\n"
           + "    ) e ON e.run_uuid = dv.run_uuid\n"
           + "    UNION\n"
-          + "    SELECT d.uuid, d.name, d.namespace_name, rim.run_uuid, lifecycle_state, event_time, event\n"
+          + "    SELECT d.uuid, dsl.name, d.namespace_name, rim.run_uuid, lifecycle_state, event_time, event\n"
           + "    FROM selected_datasets d\n"
+          + "    INNER JOIN dataset_symlinks dsl ON d.symlink_uuid = dsl.symlink_uuid AND dsl.is_primary=true\n"
           + "    INNER JOIN dataset_versions dv ON dv.uuid = d.current_version_uuid\n"
           + "    LEFT JOIN runs_input_mapping rim ON dv.uuid = rim.dataset_version_uuid\n"
           + "    LEFT JOIN LATERAL (\n"
@@ -92,7 +105,7 @@ public interface DatasetDao extends BaseDao {
           + "        WHERE run_uuid = rim.run_uuid\n"
           + "    ) e ON e.run_uuid = rim.run_uuid\n"
           + ")\n"
-          + "SELECT d.*, dv.fields, dv.lifecycle_state, sv.schema_location, t.tags, facets\n"
+          + "SELECT d.*, :datasetName as name, dv.fields, dv.lifecycle_state, sv.schema_location, t.tags, facets\n"
           + "FROM selected_datasets d\n"
           + "LEFT JOIN dataset_versions dv ON d.current_version_uuid = dv.uuid\n"
           + "LEFT JOIN stream_versions AS sv ON sv.dataset_version_uuid = dv.uuid\n"
@@ -108,8 +121,9 @@ public interface DatasetDao extends BaseDao {
           + "         jsonb_array_elements(coalesce(d2.event -> 'inputs', '[]'::jsonb) || coalesce(d2.event -> 'outputs', '[]'::jsonb)) AS ds\n"
           + "    WHERE d2.run_uuid = d2.run_uuid\n"
           + "      AND ds -> 'facets' IS NOT NULL\n"
-          + "      AND ds ->> 'name' = d2.name\n"
-          + "      AND ds ->> 'namespace' = d2.namespace_name\n"
+          + "    AND ds ->> 'name' = d2.name\n"
+          + "    AND ds ->> 'namespace' = d2.namespace_name\n" // joining on name/namespace is OK,
+          // as the same run rows are joined
           + "    GROUP BY d2.uuid\n"
           + ") f ON f.dataset_uuid = d.uuid")
   Optional<Dataset> findDatasetByName(String namespaceName, String datasetName);
@@ -131,30 +145,35 @@ public interface DatasetDao extends BaseDao {
   }
 
   @SqlQuery(
-      "SELECT d.* FROM datasets AS d WHERE d.name = :datasetName AND d.namespace_name = :namespaceName")
+      """
+      SELECT d.*
+      FROM datasets AS d
+      JOIN dataset_symlinks dsl ON d.symlink_uuid = dsl.symlink_uuid
+      WHERE dsl.name = :datasetName AND d.namespace_name = :namespaceName
+    """)
   Optional<DatasetRow> findDatasetAsRow(String namespaceName, String datasetName);
-
-  @SqlQuery("SELECT * FROM datasets WHERE name = :datasetName AND namespace_name = :namespaceName")
-  Optional<DatasetRow> getUuid(String namespaceName, String datasetName);
 
   @SqlQuery(
       "WITH selected_datasets AS (\n"
-          + "    SELECT d.*\n"
+          + "    SELECT d.*, dsl.name\n"
           + "    FROM datasets d\n"
+          + "    INNER JOIN dataset_symlinks dsl ON d.symlink_uuid = dsl.symlink_uuid AND dsl.is_primary=true\n"
           + "    WHERE d.namespace_name = :namespaceName\n"
-          + "    ORDER BY d.name\n"
+          + "    ORDER BY dsl.name\n"
           + "    LIMIT :limit OFFSET :offset\n"
           + "), dataset_runs AS (\n"
-          + "    SELECT d.uuid, d.name, d.namespace_name, dv.run_uuid, dv.lifecycle_state, event_time, event\n"
+          + "    SELECT d.uuid, dsl.name, d.namespace_name, dv.run_uuid, dv.lifecycle_state, event_time, event\n"
           + "    FROM selected_datasets d\n"
+          + "    INNER JOIN dataset_symlinks dsl ON d.symlink_uuid = dsl.symlink_uuid AND dsl.is_primary=true\n"
           + "    INNER JOIN dataset_versions dv ON dv.uuid = d.current_version_uuid\n"
           + "    LEFT JOIN LATERAL (\n"
           + "        SELECT run_uuid, event_time, event FROM lineage_events\n"
           + "        WHERE run_uuid = dv.run_uuid\n"
           + "    ) e ON e.run_uuid = dv.run_uuid\n"
           + "    UNION\n"
-          + "    SELECT d.uuid, d.name, d.namespace_name, rim.run_uuid, lifecycle_state, event_time, event\n"
+          + "    SELECT d.uuid, dsl.name, d.namespace_name, rim.run_uuid, lifecycle_state, event_time, event\n"
           + "    FROM selected_datasets d\n"
+          + "    INNER JOIN dataset_symlinks dsl ON d.symlink_uuid = dsl.symlink_uuid AND dsl.is_primary=true\n"
           + "    INNER JOIN dataset_versions dv ON dv.uuid = d.current_version_uuid\n"
           + "    LEFT JOIN runs_input_mapping rim ON dv.uuid = rim.dataset_version_uuid\n"
           + "    LEFT JOIN LATERAL (\n"
@@ -179,7 +198,8 @@ public interface DatasetDao extends BaseDao {
           + "    WHERE d2.run_uuid = d2.run_uuid\n"
           + "    AND ds -> 'facets' IS NOT NULL\n"
           + "    AND ds ->> 'name' = d2.name\n"
-          + "    AND ds ->> 'namespace' = d2.namespace_name\n"
+          + "    AND ds ->> 'namespace' = d2.namespace_name\n" // joining on name/namespace is OK,
+          // as the same run rows are joined
           + "    GROUP BY d2.uuid\n"
           + ") f ON f.dataset_uuid = d.uuid\n"
           + "ORDER BY d.name")
@@ -206,7 +226,7 @@ public interface DatasetDao extends BaseDao {
           + "namespace_name, "
           + "source_uuid, "
           + "source_name, "
-          + "name, "
+          + "symlink_uuid, "
           + "physical_name, "
           + "description, "
           + "is_deleted "
@@ -219,11 +239,11 @@ public interface DatasetDao extends BaseDao {
           + ":namespaceName, "
           + ":sourceUuid, "
           + ":sourceName, "
-          + ":name, "
+          + ":symlinkUuid, "
           + ":physicalName, "
           + ":description, "
           + ":isDeleted) "
-          + "ON CONFLICT (namespace_uuid, name) "
+          + "ON CONFLICT (namespace_uuid, symlink_uuid) "
           + "DO UPDATE SET "
           + "type = EXCLUDED.type, "
           + "updated_at = EXCLUDED.updated_at, "
@@ -237,9 +257,9 @@ public interface DatasetDao extends BaseDao {
       Instant now,
       UUID namespaceUuid,
       String namespaceName,
+      UUID symlinkUuid,
       UUID sourceUuid,
       String sourceName,
-      String name,
       String physicalName,
       String description,
       boolean isDeleted);
@@ -254,7 +274,7 @@ public interface DatasetDao extends BaseDao {
           + "namespace_name, "
           + "source_uuid, "
           + "source_name, "
-          + "name, "
+          + "symlink_uuid, "
           + "physical_name "
           + ") VALUES ( "
           + ":uuid, "
@@ -265,9 +285,9 @@ public interface DatasetDao extends BaseDao {
           + ":namespaceName, "
           + ":sourceUuid, "
           + ":sourceName, "
-          + ":name, "
+          + ":symlinkUuid, "
           + ":physicalName) "
-          + "ON CONFLICT (namespace_uuid, name) "
+          + "ON CONFLICT (namespace_uuid, symlink_uuid) "
           + "DO UPDATE SET "
           + "type = EXCLUDED.type, "
           + "updated_at = EXCLUDED.updated_at, "
@@ -279,9 +299,9 @@ public interface DatasetDao extends BaseDao {
       Instant now,
       UUID namespaceUuid,
       String namespaceName,
+      UUID symlinkUuid,
       UUID sourceUuid,
       String sourceName,
-      String name,
       String physicalName);
 
   @Transaction
@@ -292,6 +312,10 @@ public interface DatasetDao extends BaseDao {
         createNamespaceDao()
             .upsertNamespaceRow(
                 UUID.randomUUID(), now, namespaceName.getValue(), DEFAULT_NAMESPACE_OWNER);
+    DatasetSymlinkRow symlinkRow =
+        createDatasetSymlinkDao()
+            .upsertDatasetSymlinkRow(
+                UUID.randomUUID(), datasetName.getValue(), namespaceRow.getUuid(), true, now);
     SourceRow sourceRow =
         createSourceDao()
             .upsertOrDefault(
@@ -311,9 +335,9 @@ public interface DatasetDao extends BaseDao {
               now,
               namespaceRow.getUuid(),
               namespaceRow.getName(),
+              symlinkRow.getUuid(),
               sourceRow.getUuid(),
               sourceRow.getName(),
-              datasetName.getValue(),
               datasetMeta.getPhysicalName().getValue(),
               datasetMeta.getDescription().orElse(null),
               false);
@@ -325,9 +349,9 @@ public interface DatasetDao extends BaseDao {
               now,
               namespaceRow.getUuid(),
               namespaceRow.getName(),
+              symlinkRow.getUuid(),
               sourceRow.getUuid(),
               sourceRow.getName(),
-              datasetName.getValue(),
               datasetMeta.getPhysicalName().getValue());
     }
 

@@ -29,9 +29,10 @@ public interface SearchDao {
   @SqlQuery(
       "SELECT type, name, updated_at, namespace_name\n"
           + "FROM (\n"
-          + "  SELECT 'DATASET' AS type, d.name, d.updated_at, d.namespace_name\n"
+          + "  SELECT 'DATASET' AS type, dsl.name, d.updated_at, d.namespace_name\n"
           + "    FROM datasets AS d\n"
-          + "   WHERE  d.name ilike '%' || :query || '%'\n"
+          + "    JOIN dataset_symlinks dsl ON d.symlink_uuid = dsl.symlink_uuid\n"
+          + "   WHERE  dsl.name ilike '%' || :query || '%'\n"
           + "   UNION\n"
           + "  SELECT DISTINCT ON (j.namespace_name, j.name) \n"
           + "    'JOB' AS type, j.name, j.updated_at, j.namespace_name\n"

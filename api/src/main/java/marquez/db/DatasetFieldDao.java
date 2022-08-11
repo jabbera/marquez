@@ -31,10 +31,15 @@ import org.jdbi.v3.sqlobject.statement.SqlUpdate;
 @RegisterRowMapper(DatasetFieldMapper.class)
 public interface DatasetFieldDao extends BaseDao {
   @SqlQuery(
-      "SELECT EXISTS ("
+      "WITH symlinks AS (\n"
+          + "    SELECT ds_joined.symlink_uuid AS uuid, ds_joined.name AS name, namespaces.name AS namespace\n"
+          + "    FROM dataset_symlinks ds\n"
+          + "    JOIN dataset_symlinks ds_joined ON ds.symlink_uuid = ds_joined.symlink_uuid\n"
+          + "    JOIN namespaces ON namespaces.uuid = ds_joined.namespace_uuid\n"
+          + "    WHERE namespaces.name=:namespaceName and ds.name=:datasetName\n"
+          + ") SELECT EXISTS ("
           + "SELECT 1 FROM dataset_fields AS df "
-          + "INNER JOIN datasets AS d "
-          + "  ON d.uuid = df.dataset_uuid AND d.name = :datasetName AND d.namespace_name = :namespaceName "
+          + "INNER JOIN datasets AS d ON d.symlink_uuid IN (SELECT symlink_uuid FROM symlinks) "
           + "WHERE df.name = :name)")
   boolean exists(String namespaceName, String datasetName, String name);
 
@@ -42,7 +47,7 @@ public interface DatasetFieldDao extends BaseDao {
       String namespaceName, String datasetName, String fieldName, String tagName) {
     Instant now = Instant.now();
     TagRow tag = createTagDao().upsert(UUID.randomUUID(), now, tagName);
-    DatasetRow datasetRow = createDatasetDao().getUuid(namespaceName, datasetName).get();
+    DatasetRow datasetRow = createDatasetDao().findDatasetAsRow(namespaceName, datasetName).get();
     UUID fieldUuid = createDatasetFieldDao().findUuid(datasetRow.getUuid(), fieldName).get();
     datasetRow
         .getCurrentVersionUuid()

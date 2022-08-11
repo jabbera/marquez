@@ -73,18 +73,24 @@ public interface LineageDao {
   Set<JobData> getLineage(@BindList Set<UUID> jobIds, int depth);
 
   @SqlQuery(
-      "SELECT ds.*, dv.fields, dv.lifecycle_state\n"
+      "SELECT ds.*, dsl.name, dv.fields, dv.lifecycle_state\n"
           + "FROM datasets ds\n"
           + "LEFT JOIN dataset_versions dv on dv.uuid = ds.current_version_uuid\n"
+          + "INNER JOIN dataset_symlinks dsl ON ds.symlink_uuid = dsl.symlink_uuid AND dsl.is_primary=true\n"
           + "WHERE ds.uuid IN (<dsUuids>);")
   Set<DatasetData> getDatasetData(@BindList Set<UUID> dsUuids);
 
   @SqlQuery(
-      "select j.uuid from jobs j\n"
+      "WITH symlinks AS (\n"
+          + "    SELECT ds_joined.symlink_uuid AS uuid, ds_joined.name AS name, namespaces.name AS namespace\n"
+          + "    FROM dataset_symlinks ds\n"
+          + "    JOIN dataset_symlinks ds_joined ON ds.symlink_uuid = ds_joined.symlink_uuid\n"
+          + "    JOIN namespaces ON namespaces.uuid = ds_joined.namespace_uuid\n"
+          + "    WHERE namespaces.name=:namespaceName and ds.name=:datasetName\n"
+          + ") select j.uuid from jobs j\n"
           + "inner join job_versions jv on jv.job_uuid = j.uuid\n"
           + "inner join job_versions_io_mapping io on io.job_version_uuid = jv.uuid\n"
-          + "inner join datasets ds on ds.uuid = io.dataset_uuid\n"
-          + "where ds.name = :datasetName and ds.namespace_name = :namespaceName\n"
+          + "inner join datasets ds on ds.symlink_uuid IN (SELECT symlink_uuid FROM symlinks)\n"
           + "order by io_type DESC, jv.created_at DESC\n"
           + "limit 1")
   Optional<UUID> getJobFromInputOrOutput(String datasetName, String namespaceName);

@@ -32,7 +32,6 @@ public final class DatasetRowMapper implements RowMapper<DatasetRow> {
         timestampOrThrow(results, Columns.UPDATED_AT),
         uuidOrThrow(results, Columns.NAMESPACE_UUID),
         uuidOrThrow(results, Columns.SOURCE_UUID),
-        stringOrThrow(results, Columns.NAME),
         stringOrThrow(results, Columns.PHYSICAL_NAME),
         timestampOrNull(results, Columns.LAST_MODIFIED_AT),
         stringOrNull(results, Columns.DESCRIPTION),

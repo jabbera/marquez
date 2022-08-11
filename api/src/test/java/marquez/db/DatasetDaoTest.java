@@ -69,6 +69,7 @@ class DatasetDaoTest {
           handle.execute("DELETE FROM runs_input_mapping");
           handle.execute("DELETE FROM dataset_versions_field_mapping");
           handle.execute("DELETE FROM dataset_versions");
+          handle.execute("DELETE FROM dataset_symlinks");
           handle.execute("UPDATE runs SET start_run_state_uuid=NULL, end_run_state_uuid=NULL");
           handle.execute("DELETE FROM run_states");
           handle.execute("DELETE FROM runs");

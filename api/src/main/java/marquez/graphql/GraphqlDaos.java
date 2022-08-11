@@ -30,13 +30,22 @@ public interface GraphqlDaos extends SqlObject {
   List<RowMap<String, Object>> getDatasets();
 
   @SqlQuery(
-      "SELECT * FROM datasets where namespace_name = :namespaceName and datasets.name = :name")
+      """
+    SELECT * FROM datasets
+    INNER JOIN dataset_symlinks ON datasets.symlink_uuid = dataset_symlinks.symlink_uuid
+    WHERE namespace_name = :namespaceName AND dataset_symlinks.name = :name
+  """)
   RowMap<String, Object> getDatasetByNamespaceAndName(String namespaceName, String name);
 
   @SqlQuery("SELECT * FROM jobs_view where namespace_name = :namespaceName and name = :name")
   RowMap<String, Object> getJobByNamespaceAndName(String namespaceName, String name);
 
-  @SqlQuery("SELECT * FROM datasets where namespace_name = :namespaceName and name = :name")
+  @SqlQuery(
+      """
+    SELECT * FROM datasets
+    INNER JOIN dataset_symlinks ON datasets.symlink_uuid = dataset_symlinks.symlink_uuid
+    WHERE namespace_name = :namespaceName AND dataset_symlinks.name = :name
+  """)
   RowMap<String, Object> getDatasetsByNamespaceAndName(String namespaceName, String name);
 
   @SqlQuery("SELECT * FROM jobs_view")
@@ -216,9 +225,10 @@ public interface GraphqlDaos extends SqlObject {
           inner join jobs_view j on lineage.job_name = j.name and lineage.namespace_name = j.namespace_name
           -- input datasets
           left outer join (
-              select io_out.job_version_uuid, jsonb_agg((SELECT x FROM (SELECT ds_in.name, ds_in.namespace_name as namespace,  o.out_agg as "inEdges", i.in_agg as "outEdges") AS x)) as agg
+              select io_out.job_version_uuid, jsonb_agg((SELECT x FROM (SELECT dsl.name, ds_in.namespace_name as namespace,  o.out_agg as "inEdges", i.in_agg as "outEdges") AS x)) as agg
               from job_versions_io_mapping io_out
               inner join datasets ds_in on ds_in.uuid = io_out.dataset_uuid
+              inner join dataset_symlinks dsl ON ds_in.symlink_uuid = dsl.symlink_uuid AND dsl.is_primary=true
           -- output jobs for each input dataset
               left outer join (
                    select io_of_in.dataset_uuid, jsonb_agg((select x from (select j_of_in.name, j_of_in.namespace_name as namespace) as x)) as in_agg
@@ -242,9 +252,10 @@ public interface GraphqlDaos extends SqlObject {
           ) d_in on d_in.job_version_uuid = j.current_version_uuid
           --output datasets
           left outer join(
-              select io_out.job_version_uuid, jsonb_agg((SELECT x FROM (SELECT ds_in.name, ds_in.namespace_name as namespace, o.out_agg as "inEdges", i.in_agg as "outEdges") AS x)) as agg
+              select io_out.job_version_uuid, jsonb_agg((SELECT x FROM (SELECT dsl.name, ds_in.namespace_name as namespace, o.out_agg as "inEdges", i.in_agg as "outEdges") AS x)) as agg
               from job_versions_io_mapping io_out
               inner join datasets ds_in on ds_in.uuid = io_out.dataset_uuid
+              inner join dataset_symlinks dsl ON ds_in.symlink_uuid = dsl.symlink_uuid AND dsl.is_primary=true
               -- output jobs for each output dataset
               left outer join (
                    select io_of_in.dataset_uuid, jsonb_agg((select x from (select j_of_in.name, j_of_in.namespace_name as namespace) as x)) as in_agg
