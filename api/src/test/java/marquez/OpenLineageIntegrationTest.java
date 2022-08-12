@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableMap;
 import io.dropwizard.util.Resources;
 import io.openlineage.client.OpenLineage;
@@ -39,6 +40,7 @@ import marquez.client.models.Dataset;
 import marquez.client.models.DatasetVersion;
 import marquez.client.models.Job;
 import marquez.client.models.JobId;
+import marquez.client.models.RawLineageEvent;
 import marquez.client.models.Run;
 import marquez.common.Utils;
 import marquez.db.LineageTestUtils;
@@ -318,6 +320,113 @@ public class OpenLineageIntegrationTest extends BaseIntegrationTest {
         .hasFieldOrPropertyWithValue("parentJobName", null);
     List<Run> runsList = client.listRuns(NAMESPACE_NAME, dagName);
     assertThat(runsList).isNotEmpty().hasSize(1);
+  }
+
+  @Test
+  public void testSendEventAndGetItBack() {
+    LineageEvent.Run run =
+        new LineageEvent.Run(UUID.randomUUID().toString(), LineageEvent.RunFacet.builder().build());
+    LineageEvent.Job job =
+        LineageEvent.Job.builder().namespace(NAMESPACE_NAME).name(JOB_NAME).build();
+    LineageEvent.Dataset dataset =
+        LineageEvent.Dataset.builder().namespace(NAMESPACE_NAME).name(DB_TABLE_NAME).build();
+
+    // We're losing zone info on write, so I have to UTC it here to compare later
+    ZonedDateTime time = ZonedDateTime.now().withZoneSameInstant(ZoneId.of("UTC"));
+
+    final LineageEvent lineageEvent =
+        LineageEvent.builder()
+            .producer("testSendEventAndGetItBack")
+            .eventType("COMPLETE")
+            .run(run)
+            .job(job)
+            .eventTime(time)
+            .inputs(Collections.emptyList())
+            .outputs(Collections.singletonList(dataset))
+            .build();
+
+    final CompletableFuture<Integer> resp =
+        this.sendLineage(Utils.toJson(lineageEvent))
+            .thenApply(HttpResponse::statusCode)
+            .whenComplete(
+                (val, error) -> {
+                  if (error != null) {
+                    Assertions.fail("Could not complete request");
+                  }
+                });
+    assertThat(resp.join()).isEqualTo(201);
+
+    List<RawLineageEvent> events = client.listEvents();
+
+    assertThat(events.size()).isEqualTo(1);
+
+    ObjectMapper mapper = Utils.getMapper();
+    JsonNode prev = mapper.valueToTree(events.get(0));
+    assertThat(prev).isEqualTo(mapper.valueToTree(lineageEvent));
+    //      .hasFieldOrPropertyWithValue("producer", "testSendEventAndGetItBack")
+    //      .hasFieldOrPropertyWithValue("eventType", "COMPLETE")
+    //      .hasFieldOrPropertyWithValue("eventTime", time)
+    //      .hasFieldOrPropertyWithValue("run", run)
+    //      .hasFieldOrPropertyWithValue("job", job)
+    //      .hasFieldOrPropertyWithValue("inputs", Collections.emptyList())
+    //      .hasFieldOrPropertyWithValue("outputs", Collections.singletonList(dataset));
+
+  }
+
+  @Test
+  public void testFindEventByDatasetNamespace() {
+    LineageEvent.Run run =
+        new LineageEvent.Run(UUID.randomUUID().toString(), LineageEvent.RunFacet.builder().build());
+    LineageEvent.Job job =
+        LineageEvent.Job.builder().namespace(NAMESPACE_NAME).name(JOB_NAME).build();
+
+    ZonedDateTime time = ZonedDateTime.now();
+
+    for (int i = 0; i < 10; i++) {
+      LineageEvent.Dataset dataset =
+          LineageEvent.Dataset.builder()
+              .namespace(String.format("namespace%d", i))
+              .name(DB_TABLE_NAME)
+              .build();
+
+      LineageEvent event =
+          LineageEvent.builder()
+              .producer("testSendEventAndGetItBack")
+              .eventType("COMPLETE")
+              .run(run)
+              .job(job)
+              .eventTime(time)
+              .inputs(Collections.emptyList())
+              .outputs(Collections.singletonList(dataset))
+              .build();
+
+      final CompletableFuture<Integer> resp =
+          this.sendLineage(Utils.toJson(event))
+              .thenApply(HttpResponse::statusCode)
+              .whenComplete(
+                  (val, error) -> {
+                    if (error != null) {
+                      Assertions.fail("Could not complete request");
+                    }
+                  });
+      assertThat(resp.join()).isEqualTo(201);
+    }
+
+    List<RawLineageEvent> rawEvents = client.listEvents("namespace3");
+
+    assertThat(rawEvents.size()).isEqualTo(1);
+    ObjectMapper mapper = Utils.getMapper();
+    JsonNode prev = mapper.valueToTree(rawEvents.get(0));
+
+    //    assertThat(events.get(0)).isNotNull()
+    //      .hasFieldOrPropertyWithValue("producer", "testSendEventAndGetItBack")
+    //      .hasFieldOrPropertyWithValue("eventType", "COMPLETE")
+    //      .hasFieldOrPropertyWithValue("eventTime", time)
+    //      .hasFieldOrPropertyWithValue("run", run)
+    //      .hasFieldOrPropertyWithValue("job", job)
+    //      .hasFieldOrPropertyWithValue("inputs", Collections.emptyList())
+    //      .hasFieldOrPropertyWithValue("outputs", Collections.singletonList(dataset));
+
   }
 
   private CompletableFuture<Integer> sendAllEvents(RunEvent... events) {

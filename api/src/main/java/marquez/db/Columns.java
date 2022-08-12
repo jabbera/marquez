@@ -17,6 +17,8 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -126,6 +128,13 @@ public final class Columns {
   public static final String RUN_UUID = "run_uuid";
   public static final String STATE = "state";
 
+  /* LINEAGE EVENT ROW COLUMNS */
+
+  public static final String EVENT_TIME = "event_time";
+  public static final String EVENT = "event";
+  public static final String EVENT_TYPE = "event_type";
+  public static final String PRODUCER = "producer";
+
   public static UUID uuidOrNull(final ResultSet results, final String column) throws SQLException {
     if (results.getObject(column) == null) {
       return null;
@@ -154,6 +163,14 @@ public final class Columns {
       throw new IllegalArgumentException();
     }
     return results.getTimestamp(column).toInstant();
+  }
+
+  public static ZonedDateTime zonedDateTimeOrThrow(final ResultSet results, final String column)
+      throws SQLException {
+    if (results.getObject(column) == null) {
+      throw new IllegalArgumentException();
+    }
+    return results.getTimestamp(column).toInstant().atZone(ZoneId.of("UTC"));
   }
 
   public static String stringOrNull(final ResultSet results, final String column)

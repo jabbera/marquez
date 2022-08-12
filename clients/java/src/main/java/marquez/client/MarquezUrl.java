@@ -12,6 +12,7 @@ import static marquez.client.MarquezPathV1.createTagPath;
 import static marquez.client.MarquezPathV1.datasetPath;
 import static marquez.client.MarquezPathV1.datasetTagPath;
 import static marquez.client.MarquezPathV1.datasetVersionPath;
+import static marquez.client.MarquezPathV1.eventPath;
 import static marquez.client.MarquezPathV1.fieldTagPath;
 import static marquez.client.MarquezPathV1.jobPath;
 import static marquez.client.MarquezPathV1.jobVersionPath;
@@ -89,6 +90,13 @@ class MarquezUrl {
     return from(namespacePath(namespaceName));
   }
 
+  URL toEventUrl() {
+    return from(eventPath());
+  }
+
+  URL toEventUrl(String namespaceName) {
+    return from(eventPath(namespaceName));
+  }
   URL toSourceUrl(String sourceName) {
     return from(sourcePath(sourceName));
   }
